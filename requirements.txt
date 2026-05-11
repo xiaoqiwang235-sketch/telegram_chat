@@ -1,0 +1,28 @@
+# Telegram Bot Framework
+python-telegram-bot==20.7
+
+# Database
+pymysql==1.1.0
+aiomysql==0.2.0
+alembic==1.12.0
+
+# Vector Database
+faiss-cpu==1.7.4
+
+# HTTP Client
+httpx==0.25.0
+
+# Environment Management
+python-dotenv==1.0.0
+
+# Testing
+pytest==7.4.0
+pytest-asyncio==0.21.0
+pytest-cov==4.1.0
+
+# Code Quality
+pylint==3.0.0
+black==23.7.0
+
+# Type Hints
+mypy==1.5.0
