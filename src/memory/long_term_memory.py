@@ -53,17 +53,21 @@ class LongTermMemory:
         # Generate embedding
         embedding = await self.embedding_client.generate_embedding(conversation.content)
 
-        # Save conversation to database
-        await self.conversation_repo.create(conversation)
+        # Save conversation to database and get the generated ID
+        created_conversation = await self.conversation_repo.create(conversation)
+
+        # Ensure we have a valid conversation_id
+        if created_conversation.conversation_id is None:
+            raise ValueError("Failed to generate conversation_id")
 
         # Save vector to database
-        vector_id = f"vec_{conversation.conversation_id}_{uuid.uuid4().hex[:8]}"
-        await self.vector_repo.create(conversation.conversation_id, embedding, vector_id)
+        vector_id = f"vec_{created_conversation.conversation_id}_{uuid.uuid4().hex[:8]}"
+        await self.vector_repo.create(created_conversation.conversation_id, embedding, vector_id)
 
         # Add to Faiss index
         await self.faiss_manager.add_vector(
             vector_id=vector_id,
-            conversation_id=conversation.conversation_id,
+            conversation_id=created_conversation.conversation_id,
             vector=embedding,
         )
 

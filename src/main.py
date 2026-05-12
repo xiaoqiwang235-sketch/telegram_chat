@@ -2,13 +2,10 @@
 
 import os
 import logging
+from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-)
+from telegram.ext import Application, CommandHandler, filters
+from telegram.ext import MessageHandler as TelegramMessageHandler
 
 from src.database.connection_pool import ConnectionPool
 from src.database.config import get_database_config
@@ -20,6 +17,7 @@ from src.repositories.user_preferences_repository import UserPreferencesReposito
 
 from src.memory.short_term_memory import ShortTermMemory
 from src.memory.embedding_client import EmbeddingClient
+from src.memory.local_embedding_client import LocalEmbeddingClient
 from src.memory.faiss_manager import FaissManager
 from src.memory.long_term_memory import LongTermMemory
 from src.memory.memory_manager import MemoryManager
@@ -48,6 +46,11 @@ async def setup_application() -> Application:
     Returns:
         Configured bot application
     """
+    # Set HuggingFace mirror if configured
+    hf_endpoint = os.getenv("HF_ENDPOINT")
+    if hf_endpoint:
+        os.environ["HF_ENDPOINT"] = hf_endpoint
+
     # Get bot token from environment
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not bot_token:
@@ -56,6 +59,28 @@ async def setup_application() -> Application:
     # Get admin IDs
     admin_ids_str = os.getenv("TELEGRAM_ADMIN_USER_IDS", "")
     admin_ids = [int(uid.strip()) for uid in admin_ids_str.split(",") if uid.strip()]
+
+    # Configure proxy if provided
+    proxy_url = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+    request_kwargs = {}
+    if proxy_url:
+        request_kwargs["proxy_url"] = proxy_url
+        logging.info(f"Using proxy: {proxy_url}")
+
+    # Configure connection timeout
+    connect_timeout = int(os.getenv("TELEGRAM_CONNECT_TIMEOUT", "30"))
+    read_timeout = int(os.getenv("TELEGRAM_READ_TIMEOUT", "30"))
+    write_timeout = int(os.getenv("TELEGRAM_WRITE_TIMEOUT", "30"))
+    pool_timeout = int(os.getenv("TELEGRAM_POOL_TIMEOUT", "30"))
+
+    request_kwargs.update({
+        "connect_timeout": connect_timeout,
+        "read_timeout": read_timeout,
+        "write_timeout": write_timeout,
+        "pool_timeout": pool_timeout,
+    })
+
+    logging.info(f"Timeouts configured - connect: {connect_timeout}s, read: {read_timeout}s, write: {write_timeout}s, pool: {pool_timeout}s")
 
     # Initialize database connection pool
     db_config = get_database_config()
@@ -72,17 +97,38 @@ async def setup_application() -> Application:
     # Initialize memory components
     short_term_memory = ShortTermMemory(max_messages=50)
 
-    # Initialize embedding client
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    openai_base_url = os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com")
-    embedding_client = EmbeddingClient(
-        api_key=openai_api_key,
-        base_url=openai_base_url,
-        dimensions=1536,
-    )
+    # Initialize embedding client (local or remote)
+    use_local_embeddings = os.getenv("USE_LOCAL_EMBEDDINGS", "false").lower() == "true"
+
+    if use_local_embeddings:
+        # Use local embedding model
+        model_name = os.getenv("LOCAL_EMBEDDING_MODEL", "moka-ai/m3e-base")
+        device = os.getenv("LOCAL_EMBEDDING_DEVICE", "cpu")
+        dimensions = int(os.getenv("LOCAL_EMBEDDING_DIMENSIONS", "768"))
+
+        embedding_client = LocalEmbeddingClient(
+            model_name=model_name,
+            dimensions=dimensions,
+            device=device,
+        )
+    else:
+        # Use OpenAI API
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        openai_base_url = os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com")
+
+        if not openai_api_key or openai_api_key == "your_openai_api_key_here":
+            raise ValueError("OPENAI_API_KEY is required when USE_LOCAL_EMBEDDINGS=false")
+
+        dimensions = int(os.getenv("OPENAI_EMBEDDING_DIMENSIONS", "1536"))
+
+        embedding_client = EmbeddingClient(
+            api_key=openai_api_key,
+            base_url=openai_base_url,
+            dimensions=dimensions,
+        )
 
     # Initialize Faiss manager
-    faiss_manager = FaissManager(dimension=1536)
+    faiss_manager = FaissManager(dimension=dimensions)
 
     # Initialize long-term memory
     long_term_memory = LongTermMemory(
@@ -104,11 +150,15 @@ async def setup_application() -> Application:
     # Initialize Mimo client
     mimo_api_key = os.getenv("MIMO_API_KEY")
     mimo_base_url = os.getenv("MIMO_API_BASE_URL", "https://api.xiaomimimo.com")
+    mimo_model = os.getenv("MIMO_MODEL", "mimo-v2.5")
+    mimo_proxy_url = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
     from src.integrations.mimo_client import MimoClient
 
     mimo_client = MimoClient(
         api_key=mimo_api_key,
         base_url=mimo_base_url,
+        model=mimo_model,
+        proxy_url=mimo_proxy_url,
     )
 
     # Initialize chat service
@@ -134,7 +184,29 @@ async def setup_application() -> Application:
     message_handler_obj = MessageHandler(chat_service=chat_service)
 
     # Create application
-    application = Application.builder().token(bot_token).build()
+    builder = Application.builder().token(bot_token)
+
+    # Configure connection settings
+    if request_kwargs:
+        if "proxy_url" in request_kwargs:
+            builder = builder.proxy(request_kwargs["proxy_url"])
+            logging.info(f"Proxy configured: {request_kwargs['proxy_url']}")
+
+        # Configure timeouts
+        connect_timeout = request_kwargs.get("connect_timeout", 30)
+        read_timeout = request_kwargs.get("read_timeout", 30)
+        write_timeout = request_kwargs.get("write_timeout", 30)
+        pool_timeout = request_kwargs.get("pool_timeout", 30)
+
+        builder = builder.connect_timeout(connect_timeout)
+        builder = builder.read_timeout(read_timeout)
+        builder = builder.write_timeout(write_timeout)
+        builder = builder.pool_timeout(pool_timeout)
+
+        logging.info(f"Timeouts configured - connect: {connect_timeout}s, read: {read_timeout}s, write: {write_timeout}s, pool: {pool_timeout}s")
+
+    application = builder.build()
+    logging.info("Application created successfully")
 
     # Register command handlers
     application.add_handler(CommandHandler("start", start_handler.handle))
@@ -150,7 +222,7 @@ async def setup_application() -> Application:
 
     # Register message handler (must be last)
     application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler_obj.handle)
+        TelegramMessageHandler(filters.TEXT & ~filters.COMMAND, message_handler_obj.handle)
     )
 
     # Register error handler
@@ -165,6 +237,9 @@ async def setup_application() -> Application:
 
 def main() -> None:
     """Main entry point for running the bot."""
+    # Load environment variables from .env file
+    load_dotenv()
+
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",

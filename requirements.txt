@@ -1,5 +1,5 @@
 # Telegram Bot Framework
-python-telegram-bot==20.7
+python-telegram-bot>=21.0
 
 # Database
 pymysql==1.1.0
@@ -7,10 +7,15 @@ aiomysql==0.2.0
 alembic==1.12.0
 
 # Vector Database
-faiss-cpu==1.7.4
+faiss-cpu>=1.7.4
+
+# Local Embedding Models
+sentence-transformers>=2.2.2
+transformers>=4.35.0
+torch>=2.1.0
 
 # HTTP Client
-httpx==0.25.0
+httpx>=0.25.0,<0.27.0
 
 # Environment Management
 python-dotenv==1.0.0

@@ -19,8 +19,9 @@ class MimoClient:
         self,
         api_key: str,
         base_url: str = "https://api.xiaomimimo.com",
-        model: str = "mi-mimo-model",
+        model: str = "mimo-v2.5",
         timeout: float = 30.0,
+        proxy_url: str | None = None,
     ) -> None:
         """Initialize Mimo client.
 
@@ -29,11 +30,13 @@ class MimoClient:
             base_url: Base URL for API endpoint
             model: Model name to use
             timeout: Request timeout in seconds
+            proxy_url: Optional proxy URL for requests
         """
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
         self.timeout = timeout
+        self.proxy_url = proxy_url
 
     async def generate_response(
         self,
@@ -81,7 +84,11 @@ class MimoClient:
         last_error = None
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                client_kwargs = {"timeout": self.timeout}
+                if self.proxy_url:
+                    client_kwargs["proxy"] = self.proxy_url
+
+                async with httpx.AsyncClient(**client_kwargs) as client:
                     response = await client.post(url, json=data, headers=headers)
 
                     if response.status_code == 200:

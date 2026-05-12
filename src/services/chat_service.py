@@ -125,7 +125,7 @@ class ChatService:
 
             # Save user message
             user_conversation = Conversation(
-                conversation_id=0,  # Will be assigned by database
+                conversation_id=None,  # Will be assigned by database
                 user_id=user_id,
                 group_id=group_id,
                 role="user",
@@ -138,7 +138,7 @@ class ChatService:
 
             # Save assistant response
             assistant_conversation = Conversation(
-                conversation_id=0,
+                conversation_id=None,  # Will be assigned by database
                 user_id=user_id,
                 group_id=group_id,
                 role="assistant",

@@ -17,7 +17,7 @@ class ConversationRepository(BaseRepository):
             conversation: Conversation to create
 
         Returns:
-            Created conversation
+            Created conversation with database-generated ID
         """
         query = """
             INSERT INTO conversations (user_id, group_id, role, content, timestamp, message_id, style_id)
@@ -34,6 +34,24 @@ class ConversationRepository(BaseRepository):
         )
 
         await self._execute_write(query, params)
+
+        # Get the generated conversation_id
+        id_query = "SELECT LAST_INSERT_ID() as id"
+        result = await self._execute_query_one(id_query, ())
+
+        if result and result[0]:
+            # Update and return the conversation with the generated ID
+            return Conversation(
+                conversation_id=result[0],
+                user_id=conversation.user_id,
+                group_id=conversation.group_id,
+                role=conversation.role,
+                content=conversation.content,
+                timestamp=conversation.timestamp,
+                message_id=conversation.message_id,
+                style_id=conversation.style_id,
+            )
+
         return conversation
 
     async def get_by_id(self, conversation_id: int) -> Conversation | None:

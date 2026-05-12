@@ -22,14 +22,14 @@ class Conversation:
         style_id: ID of the style used for the message
     """
 
-    conversation_id: int
-    user_id: int
-    group_id: int | None
-    role: str
-    content: str
-    timestamp: str
-    message_id: int | None
-    style_id: int | None
+    conversation_id: int | None = None
+    user_id: int = 0
+    group_id: int | None = None
+    role: str = "user"
+    content: str = ""
+    timestamp: str = ""
+    message_id: int | None = None
+    style_id: int | None = None
 
     def __post_init__(self) -> None:
         """Validate conversation role after initialization."""
