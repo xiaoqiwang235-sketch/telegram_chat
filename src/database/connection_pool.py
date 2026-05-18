@@ -1,7 +1,7 @@
-"""Async database connection pool management."""
+"""Async database connection pool management supporting MySQL and SQLite."""
 
-import aiomysql
-from typing import AsyncContextManager, Awaitable
+from contextlib import asynccontextmanager
+from typing import AsyncContextManager, Awaitable, Literal
 
 from src.database.config import DatabaseConfig, get_database_config
 
@@ -10,11 +10,11 @@ _pool_instance: "ConnectionPool | None" = None
 
 
 class ConnectionPool:
-    """Async database connection pool manager.
+    """Async database connection manager supporting MySQL and SQLite.
 
     Attributes:
         config: Database configuration
-        _pool: Internal aiomysql pool instance
+        _pool: Internal pool/connection instance
     """
 
     def __init__(self, config: DatabaseConfig) -> None:
@@ -24,30 +24,42 @@ class ConnectionPool:
             config: Database configuration
         """
         self.config = config
-        self._pool: aiomysql.Pool | None = None
+        self._pool: "aiomysql.Pool | aiosqlite.Connection | None" = None
 
     async def initialize(self) -> None:
-        """Initialize the connection pool.
+        """Initialize the database connection/pool.
 
-        Creates the aiomysql pool with the configured parameters.
+        Creates the appropriate connection based on db_type.
         """
         if self._pool is None:
-            self._pool = await aiomysql.create_pool(
-                host=self.config.host,
-                port=self.config.port,
-                db=self.config.database,
-                user=self.config.user,
-                password=self.config.password,
-                minsize=1,
-                maxsize=self.config.pool_size + self.config.max_overflow,
-                autocommit=False,
-            )
+            if self.config.db_type == "mysql":
+                import aiomysql
 
-    async def acquire(self) -> aiomysql.Connection:
+                self._pool = await aiomysql.create_pool(
+                    host=self.config.host,
+                    port=self.config.port,
+                    db=self.config.database,
+                    user=self.config.user,
+                    password=self.config.password,
+                    minsize=1,
+                    maxsize=self.config.pool_size + self.config.max_overflow,
+                    autocommit=False,
+                )
+            else:  # sqlite
+                import aiosqlite
+
+                self._pool = await aiosqlite.connect(self.config.db_path)
+                # Enable foreign keys
+                await self._pool.execute("PRAGMA foreign_keys = ON")
+                # Enable WAL mode for better concurrent access
+                await self._pool.execute("PRAGMA journal_mode = WAL")
+                await self._pool.commit()
+
+    async def acquire(self):
         """Acquire a connection from the pool.
 
         Returns:
-            Database connection
+            Database connection (aiomysql.Connection or aiosqlite.Connection)
 
         Raises:
             RuntimeError: If pool is not initialized
@@ -56,24 +68,35 @@ class ConnectionPool:
             await self.initialize()
 
         assert self._pool is not None  # For type checker
-        return await self._pool.acquire()
+        if self.config.db_type == "mysql":
+            return await self._pool.acquire()
+        else:
+            return self._pool
 
-    async def release(self, connection: aiomysql.Connection) -> None:
+    async def release(self, connection) -> None:
         """Release a connection back to the pool.
 
         Args:
             connection: Connection to release
+
+        Raises:
+            RuntimeError: If pool is not initialized
         """
         if self._pool is None:
             raise RuntimeError("Connection pool is not initialized")
 
-        self._pool.release(connection)
+        if self.config.db_type == "mysql":
+            self._pool.release(connection)
+        # For SQLite, no need to release
 
     async def close(self) -> None:
-        """Close the connection pool."""
+        """Close the database connection/pool."""
         if self._pool is not None:
-            self._pool.close()
-            await self._pool.wait_closed()
+            if self.config.db_type == "mysql":
+                self._pool.close()
+                await self._pool.wait_closed()
+            else:
+                await self._pool.close()
             self._pool = None
 
     async def __aenter__(self) -> "ConnectionPool":
